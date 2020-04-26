@@ -1,0 +1,139 @@
+---
+title: "Week 14"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+# R Studio API Code
+```{r eval = F}
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+
+
+# Libraries
+```{r message = F}
+library(tidyverse)
+library(RMariaDB)
+library(caret)
+```
+
+
+# Data import and cleaning
+
+## SQL code: sql_tbl
+```{r}
+con <- dbConnect(MariaDB(),
+                 user     = "rnlander_8960r",
+                 password = "rTCo.4vQ2vc-",
+                 port     = "3306",
+                 host     = "tntlab.org",
+                 dbname   = "rnlander_8960")
+
+# see all table names in the database
+tbl <- dbGetQuery(con, "SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'")
+# three tables: demos, responses, socialmedia
+
+# check socialmedia table: "code", 
+# check responses table: "smu_code", "ident"
+# check demos table: "participant_num"
+# ident from responses match with participant_num from demos
+
+
+# join demos and responses by participant number, and join socialmedia by code
+sql_tbl <- dbGetQuery(con, 
+                      "SELECT * FROM responses 
+                      INNER JOIN demos 
+                      ON responses.ident = demos.participant_num 
+                      LEFT JOIN socialmedia 
+                      ON responses.smu_code = socialmedia.code")
+```
+
+
+## Tidyverse: tidy_tbl
+```{r}
+demos_tbl <- dbGetQuery(con, "SELECT * FROM demos")
+sm_tbl <- dbGetQuery(con, "SELECT * FROM socialmedia")
+res_tbl <- dbGetQuery(con, "SELECT * FROM responses")
+
+tidy_tbl <- res_tbl %>%
+  inner_join(demos_tbl, by = c("ident" = "participant_num")) %>%
+  left_join(sm_tbl, by = c("smu_code" = "code"))
+```
+
+
+## Cleaning
+```{r}
+# mean privacy score, age, and number of social media platforms.
+clean_tbl <- tidy_tbl %>%
+  # transform variables to numeric
+  mutate(rec_events = case_when(rec_events == "NA" ~ NA_integer_,
+                                rec_events == "Refused" ~ NA_integer_,
+                                rec_events == "Not acceptable at all" ~ 1L,
+                                rec_events == "Not very acceptable" ~ 2L,
+                                rec_events == "Somewhat acceptable" ~ 3L,
+                                rec_events == "Very acceptable" ~ 4L)) %>%
+  mutate(rec_products = case_when(rec_products == "NA" ~ NA_integer_,
+                                  rec_products == "Refused" ~ NA_integer_,
+                                  rec_products == "Not acceptable at all" ~ 1L,
+                                  rec_products == "Not very acceptable" ~ 2L,
+                                  rec_products == "Somewhat acceptable" ~ 3L,
+                                  rec_products == "Very acceptable" ~ 4L)) %>%  
+  mutate(rec_friends = case_when(rec_friends == "NA" ~ NA_integer_,
+                                 rec_friends == "Refused" ~ NA_integer_,
+                                 rec_friends == "Not acceptable at all" ~ 1L,
+                                 rec_friends == "Not very acceptable" ~ 2L,
+                                 rec_friends == "Somewhat acceptable" ~ 3L,
+                                 rec_friends == "Very acceptable" ~ 4L)) %>% 
+  mutate(rec_policial = case_when(rec_policial == "NA" ~ NA_integer_,
+                                  rec_policial == "Refused" ~ NA_integer_,
+                                  rec_policial == "Not acceptable at all" ~ 1L,
+                                  rec_policial == "Not very acceptable" ~ 2L,
+                                  rec_policial == "Somewhat acceptable" ~ 3L,
+                                  rec_policial == "Very acceptable" ~ 4L)) %>%
+  mutate(facebook = case_when(facebook == "Facebook" ~ 1L,
+                              facebook != "Facebook" ~ 0L),
+         twitter = case_when(twitter == "Twitter" ~ 1L,
+                             twitter != "Twitter" ~ 0L),
+         instagram = case_when(instagram == "Instagram" ~ 1L,
+                               instagram != "Instagram" ~ 0L),
+         youtube = case_when(youtube == "Youtube" ~ 1L,
+                             youtube != "Youtube" ~ 0L),
+         snapchat = case_when(snapchat == "Snapchat" ~ 1L,
+                              snapchat != "Snapchat" ~ 0L),
+         other = case_when(other == "Other" ~ 1L,
+                           other != "Other" ~ 0L)) %>%
+  # transform age to factor varible
+  mutate(age = factor(age)) %>%
+  rowwise() %>%
+  # mean privacy score (mean_score) and number of social media platforms (smp_num)
+  mutate(mean_score = mean(c(rec_events,rec_products, rec_friends,rec_policial), na.rm=T),
+         smp_num    = sum(c(facebook, twitter, instagram, other))) %>%
+  # select necessary variables for analysis
+  select(mean_score, age, smp_num)
+           
+```
+
+
+# Analysis
+```{r}
+lm_mod <- lm(mean_score ~ age*smp_num,
+             data = clean_tbl)
+summary(lm_mod)
+```
+
+# Visualization
+```{r}
+clean_tbl %>%
+  ggplot(aes(x = smp_num, y = mean_score, color = age)) +
+  geom_smooth(method = lm, se = FALSE) + 
+  theme_classic() + 
+  labs(title = "Mean privacy score and Number of social media platforms used by age group", 
+       x = "number of social media platforms",
+       y = "mean privacy score")
+```
+
+# Intepretation
+
+People who used more social medial platforms on average had greater acceptance of privacy intrusions. Older people, compared to younger people, had lower acceptance of privacy intrusions. There is no moderation effect of age on the relationship between social media usage and acceptance of privacy intrusions.
